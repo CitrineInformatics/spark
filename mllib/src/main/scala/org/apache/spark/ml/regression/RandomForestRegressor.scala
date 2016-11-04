@@ -199,18 +199,27 @@ class RandomForestRegressionModel private[ml] (
 
   protected def predictVariance(features: Vector): Double = {
     val predictions: Array[Double] = _trees.map(_.rootNode.predictImpl(features).prediction)
+    /* Compute the average of the predictions */
     val mean: Double = predictions.sum / getNumTrees
+    /* Compute the differences between each tree and the average */
     val diff: Array[Double] = predictions.map(_ - mean)
+
+    /* Compute the infintesimal jackknife variance estimate */
     val varianceIJ: Double = Nib.map { v =>
       val cov = v.zip(diff).map(p2 => p2._1 * p2._2).sum / getNumTrees
       cov * cov
     }.sum
+
+    /* Compute the jackknife-after-bootstrap variance estimate */
     val varianceJ = (Nib.size - 1.0)/Nib.size * Nib.map{ v =>
       Math.pow(
-        v.zip(predictions).filter(_._1 == 0).map(_._2).sum / v.count(_ == 0.0) - mean
+        v.zip(predictions).filter(_._1 == -1.0).map(_._2).sum / v.count(_ == -1.0) - mean
         , 2)
     }.sum
+
+    /* Compute the first order bias correction for the variance estimators */
     val correction = diff.map(Math.pow(_, 2)).sum * Nib.size / (getNumTrees * getNumTrees)
+    /* Mix the IJ and J estimators with their bias corrections */
     (varianceIJ + varianceJ - Math.E * correction)/2.0
   }
 
