@@ -25,6 +25,7 @@ import scala.util.Random
 import org.apache.spark.internal.Logging
 import org.apache.spark.ml.classification.DecisionTreeClassificationModel
 import org.apache.spark.ml.feature.LabeledPoint
+import org.apache.spark.ml.linalg.{Matrices, Matrix}
 import org.apache.spark.ml.regression.DecisionTreeRegressionModel
 import org.apache.spark.ml.tree._
 import org.apache.spark.ml.util.Instrumentation
@@ -92,7 +93,7 @@ private[spark] object RandomForest extends Logging {
       featureSubsetStrategy: String,
       seed: Long,
       instr: Option[Instrumentation[_]],
-      parentUID: Option[String] = None): Array[DecisionTreeModel] = {
+      parentUID: Option[String] = None): (Array[DecisionTreeModel], Array[Array[Double]]) = {
 
     val timer = new TimeTracker()
 
@@ -131,6 +132,9 @@ private[spark] object RandomForest extends Logging {
     val baggedInput = BaggedPoint
       .convertToBaggedRDD(treeInput, strategy.subsamplingRate, numTrees, withReplacement, seed)
       .persist(StorageLevel.MEMORY_AND_DISK)
+
+    // Extract the matrix of bagged weights
+    val Nib: Array[Array[Double]] = baggedInput.map(_.subsampleWeights.map(_ - 1)).collect()
 
     // depth of the decision tree
     val maxDepth = strategy.maxDepth
@@ -208,7 +212,7 @@ private[spark] object RandomForest extends Logging {
 
     val numFeatures = metadata.numFeatures
 
-    parentUID match {
+    val trees: Array[DecisionTreeModel] = parentUID match {
       case Some(uid) =>
         if (strategy.algo == OldAlgo.Classification) {
           topNodes.map { rootNode =>
@@ -230,6 +234,7 @@ private[spark] object RandomForest extends Logging {
           topNodes.map(rootNode => new DecisionTreeRegressionModel(rootNode.toNode, numFeatures))
         }
     }
+    (trees, Nib)
   }
 
   /**

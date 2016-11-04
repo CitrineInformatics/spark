@@ -25,6 +25,7 @@ import org.apache.spark.ml.{PredictionModel, Predictor}
 import org.apache.spark.ml.feature.LabeledPoint
 import org.apache.spark.ml.linalg.Vector
 import org.apache.spark.ml.param.ParamMap
+import org.apache.spark.ml.param.shared.HasVarianceCol
 import org.apache.spark.ml.tree._
 import org.apache.spark.ml.tree.impl.RandomForest
 import org.apache.spark.ml.util._
@@ -101,12 +102,15 @@ class RandomForestRegressor @Since("1.4.0") (@Since("1.4.0") override val uid: S
     val instr = Instrumentation.create(this, oldDataset)
     instr.logParams(params: _*)
 
-    val trees = RandomForest
+    val (trees: Array[DecisionTreeModel], nib: Array[Array[Double]]) = RandomForest
       .run(oldDataset, strategy, getNumTrees, getFeatureSubsetStrategy, getSeed, Some(instr))
-      .map(_.asInstanceOf[DecisionTreeRegressionModel])
 
-    val numFeatures = oldDataset.first().features.size
-    val m = new RandomForestRegressionModel(trees, numFeatures)
+    val niceTrees: Array[DecisionTreeRegressionModel] = trees.map(
+      _.asInstanceOf[DecisionTreeRegressionModel]
+    )
+
+    val numFeatures: Int = oldDataset.first().features.size
+    val m = new RandomForestRegressionModel(niceTrees, numFeatures, nib)
     instr.logSuccess(m)
     m
   }
@@ -142,9 +146,11 @@ object RandomForestRegressor extends DefaultParamsReadable[RandomForestRegressor
 class RandomForestRegressionModel private[ml] (
     override val uid: String,
     private val _trees: Array[DecisionTreeRegressionModel],
-    override val numFeatures: Int)
+    override val numFeatures: Int,
+    val Nib: Array[Array[Double]])
   extends PredictionModel[Vector, RandomForestRegressionModel]
   with RandomForestRegressionModelParams with TreeEnsembleModel[DecisionTreeRegressionModel]
+  with HasVarianceCol
   with MLWritable with Serializable {
 
   require(_trees.nonEmpty, "RandomForestRegressionModel requires at least 1 tree.")
@@ -154,8 +160,12 @@ class RandomForestRegressionModel private[ml] (
    *
    * @param trees  Component trees
    */
-  private[ml] def this(trees: Array[DecisionTreeRegressionModel], numFeatures: Int) =
-    this(Identifiable.randomUID("rfr"), trees, numFeatures)
+  private[ml] def this(
+                        trees: Array[DecisionTreeRegressionModel],
+                        numFeatures: Int,
+                        Nib: Array[Array[Double]]
+                      ) =
+    this(Identifiable.randomUID("rfr"), trees, numFeatures, Nib)
 
   @Since("1.4.0")
   override def trees: Array[DecisionTreeRegressionModel] = _trees
@@ -163,15 +173,21 @@ class RandomForestRegressionModel private[ml] (
   // Note: We may add support for weights (based on tree performance) later on.
   private lazy val _treeWeights: Array[Double] = Array.fill[Double](_trees.length)(1.0)
 
+  def setVarianceCol(value: String): this.type = set(varianceCol, value)
+
   @Since("1.4.0")
   override def treeWeights: Array[Double] = _treeWeights
 
   override protected def transformImpl(dataset: Dataset[_]): DataFrame = {
     val bcastModel = dataset.sparkSession.sparkContext.broadcast(this)
-    val predictUDF = udf { (features: Any) =>
-      bcastModel.value.predict(features.asInstanceOf[Vector])
+    val predictUDF = udf { (features: Vector) =>
+      bcastModel.value.predict(features)
+    }
+    val predictVarianceUDF = udf{ (features: Vector) =>
+      bcastModel.value.predictVariance(features)
     }
     dataset.withColumn($(predictionCol), predictUDF(col($(featuresCol))))
+      .withColumn($(varianceCol), predictVarianceUDF(col($(featuresCol))))
   }
 
   override protected def predict(features: Vector): Double = {
@@ -179,6 +195,17 @@ class RandomForestRegressionModel private[ml] (
     // Predict average of tree predictions.
     // Ignore the weights since all are 1.0 for now.
     _trees.map(_.rootNode.predictImpl(features).prediction).sum / getNumTrees
+  }
+
+  protected def predictVariance(features: Vector): Double = {
+    val predictions: Array[Double] = _trees.map(_.rootNode.predictImpl(features).prediction)
+    val mean: Double = predictions.sum / getNumTrees
+    val diff: Array[Double] = predictions.map(_ - mean)
+    val variance: Double = Nib.map { v =>
+      val cov = v.zip(diff).map(p2 => p2._1 * p2._2).sum / getNumTrees
+      cov * cov
+    }.sum // - diff.map(Math.pow(_, 2)).sum * Nib.size / (getNumTrees * getNumTrees)
+    variance
   }
 
   /**
@@ -191,7 +218,8 @@ class RandomForestRegressionModel private[ml] (
 
   @Since("1.4.0")
   override def copy(extra: ParamMap): RandomForestRegressionModel = {
-    copyValues(new RandomForestRegressionModel(uid, _trees, numFeatures), extra).setParent(parent)
+    copyValues(new RandomForestRegressionModel(uid, _trees, numFeatures, Nib), extra)
+      .setParent(parent)
   }
 
   @Since("1.4.0")
@@ -265,7 +293,9 @@ object RandomForestRegressionModel extends MLReadable[RandomForestRegressionMode
       require(numTrees == trees.length, s"RandomForestRegressionModel.load expected $numTrees" +
         s" trees based on metadata but found ${trees.length} trees.")
 
-      val model = new RandomForestRegressionModel(metadata.uid, trees, numFeatures)
+      val model = new RandomForestRegressionModel(
+        metadata.uid, trees, numFeatures, Array(Array(0.0))
+      )
       DefaultParamsReader.getAndSetParams(model, metadata)
       model
     }
@@ -284,6 +314,6 @@ object RandomForestRegressionModel extends MLReadable[RandomForestRegressionMode
       DecisionTreeRegressionModel.fromOld(tree, null, categoricalFeatures)
     }
     val uid = if (parent != null) parent.uid else Identifiable.randomUID("rfr")
-    new RandomForestRegressionModel(uid, newTrees, numFeatures)
+    new RandomForestRegressionModel(uid, newTrees, numFeatures, Array(Array(0.0)))
   }
 }

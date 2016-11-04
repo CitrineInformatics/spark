@@ -322,7 +322,7 @@ class RandomForestSuite extends SparkFunSuite with MLlibTestSparkContext {
       numClasses = 2, categoricalFeaturesInfo = Map(0 -> 3), maxBins = 3)
 
     val model = RandomForest.run(input, strategy, numTrees = 1, featureSubsetStrategy = "all",
-      seed = 42, instr = None).head
+      seed = 42, instr = None)._1.head
     model.rootNode match {
       case n: InternalNode => n.split match {
         case s: CategoricalSplit =>
@@ -345,9 +345,9 @@ class RandomForestSuite extends SparkFunSuite with MLlibTestSparkContext {
       new OldStrategy(OldAlgo.Classification, Entropy, 3, 2, 100, maxMemoryInMB = 0)
 
     val tree1 = RandomForest.run(rdd, strategy1, numTrees = 1, featureSubsetStrategy = "all",
-      seed = 42, instr = None).head
+      seed = 42, instr = None)._1.head
     val tree2 = RandomForest.run(rdd, strategy2, numTrees = 1, featureSubsetStrategy = "all",
-      seed = 42, instr = None).head
+      seed = 42, instr = None)._1.head
 
     def getChildren(rootNode: Node): Array[InternalNode] = rootNode match {
       case n: InternalNode =>
