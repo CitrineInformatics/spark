@@ -201,11 +201,17 @@ class RandomForestRegressionModel private[ml] (
     val predictions: Array[Double] = _trees.map(_.rootNode.predictImpl(features).prediction)
     val mean: Double = predictions.sum / getNumTrees
     val diff: Array[Double] = predictions.map(_ - mean)
-    val variance: Double = Nib.map { v =>
+    val varianceIJ: Double = Nib.map { v =>
       val cov = v.zip(diff).map(p2 => p2._1 * p2._2).sum / getNumTrees
       cov * cov
-    }.sum // - diff.map(Math.pow(_, 2)).sum * Nib.size / (getNumTrees * getNumTrees)
-    variance
+    }.sum
+    val varianceJ = (Nib.size - 1.0)/Nib.size * Nib.map{ v =>
+      Math.pow(
+        v.zip(predictions).filter(_._1 == 0).map(_._2).sum / v.count(_ == 0.0) - mean
+        , 2)
+    }.sum
+    val correction = diff.map(Math.pow(_, 2)).sum * Nib.size / (getNumTrees * getNumTrees)
+    (varianceIJ + varianceJ - Math.E * correction)/2.0
   }
 
   /**
