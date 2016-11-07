@@ -44,6 +44,7 @@ import org.apache.spark.sql.functions._
 @Since("1.4.0")
 class RandomForestRegressor @Since("1.4.0") (@Since("1.4.0") override val uid: String)
   extends Predictor[Vector, RandomForestRegressor, RandomForestRegressionModel]
+  with HasVarianceCol
   with RandomForestRegressorParams with DefaultParamsWritable {
 
   @Since("1.4.0")
@@ -115,6 +116,9 @@ class RandomForestRegressor @Since("1.4.0") (@Since("1.4.0") override val uid: S
     m
   }
 
+  @Since("2.0.2")
+  def setVarianceCol(value: String): this.type = set(varianceCol, value)
+
   @Since("1.4.0")
   override def copy(extra: ParamMap): RandomForestRegressor = defaultCopy(extra)
 }
@@ -173,7 +177,6 @@ class RandomForestRegressionModel private[ml] (
   // Note: We may add support for weights (based on tree performance) later on.
   private lazy val _treeWeights: Array[Double] = Array.fill[Double](_trees.length)(1.0)
 
-  def setVarianceCol(value: String): this.type = set(varianceCol, value)
 
   @Since("1.4.0")
   override def treeWeights: Array[Double] = _treeWeights
@@ -186,8 +189,11 @@ class RandomForestRegressionModel private[ml] (
     val predictVarianceUDF = udf{ (features: Vector) =>
       bcastModel.value.predictVariance(features)
     }
-    dataset.withColumn($(predictionCol), predictUDF(col($(featuresCol))))
-      .withColumn($(varianceCol), predictVarianceUDF(col($(featuresCol))))
+    var output = dataset.withColumn($(predictionCol), predictUDF(col($(featuresCol))))
+    if (isDefined(varianceCol)) {
+      output = output.withColumn($(varianceCol), predictVarianceUDF(col($(featuresCol))))
+    }
+    output
   }
 
   override protected def predict(features: Vector): Double = {
@@ -212,9 +218,8 @@ class RandomForestRegressionModel private[ml] (
 
     /* Compute the jackknife-after-bootstrap variance estimate */
     val varianceJ = (Nib.size - 1.0)/Nib.size * Nib.map{ v =>
-      Math.pow(
-        v.zip(predictions).filter(_._1 == -1.0).map(_._2).sum / v.count(_ == -1.0) - mean
-        , 2)
+      val predictionsWithoutV: Seq[Double] = v.zip(predictions).filter(_._1 == -1.0).map(_._2)
+      Math.pow(predictionsWithoutV.sum / predictionsWithoutV.size - mean, 2)
     }.sum
 
     /* Compute the first order bias correction for the variance estimators */
