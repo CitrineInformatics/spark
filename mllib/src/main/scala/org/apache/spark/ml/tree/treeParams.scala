@@ -412,10 +412,7 @@ private[ml] trait RandomForestRegressorParams
   extends RandomForestParams with TreeRegressorParams
 
 private[ml] trait RandomForestRegressionModelParams extends TreeEnsembleParams
-  with HasFeatureSubsetStrategy with TreeRegressorParams {
-
-
-}
+  with HasFeatureSubsetStrategy with TreeRegressorParams
 
 /**
  * Parameters for Gradient-Boosted Tree algorithms.
