@@ -21,12 +21,13 @@
   <parent>
     <groupId>org.apache.spark</groupId>
     <artifactId>spark-parent_2.11</artifactId>
-    <version>2.0.2</version>
+    <version>2.0.3.3-SNAPSHOT</version>
     <relativePath>../../pom.xml</relativePath>
   </parent>
 
   <groupId>org.apache.spark</groupId>
   <artifactId>spark-streaming-kafka-0-8-assembly_2.11</artifactId>
+  <version>2.0.3.3-SNAPSHOT</version>
   <packaging>jar</packaging>
   <name>Spark Project External Kafka Assembly</name>
   <url>http://spark.apache.org/</url>
@@ -156,15 +157,15 @@
           </goals>
           <configuration>
             <transformers>
-              <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
+              <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer" />
               <transformer implementation="org.apache.maven.plugins.shade.resource.AppendingTransformer">
                 <resource>reference.conf</resource>
               </transformer>
               <transformer implementation="org.apache.maven.plugins.shade.resource.DontIncludeResourceTransformer">
                 <resource>log4j.properties</resource>
               </transformer>
-              <transformer implementation="org.apache.maven.plugins.shade.resource.ApacheLicenseResourceTransformer"/>
-              <transformer implementation="org.apache.maven.plugins.shade.resource.ApacheNoticeResourceTransformer"/>
+              <transformer implementation="org.apache.maven.plugins.shade.resource.ApacheLicenseResourceTransformer" />
+              <transformer implementation="org.apache.maven.plugins.shade.resource.ApacheNoticeResourceTransformer" />
             </transformers>
           </configuration>
         </execution>
