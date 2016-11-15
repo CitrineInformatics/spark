@@ -234,7 +234,7 @@ class RandomForestRegressionModel private[ml] (
     /* Compute the first order bias correction for the variance estimators */
     val correction = diff.map(Math.pow(_, 2)).sum * Nib.size / (getNumTrees * getNumTrees)
     /* Mix the IJ and J estimators with their bias corrections */
-    (varianceIJ + varianceJ - Math.E * correction)/2.0
+    Math.abs(varianceIJ + varianceJ - Math.E * correction)/2.0
   }
 
   protected def predictScores(features: Vector): org.apache.spark.ml.linalg.Vector = {
