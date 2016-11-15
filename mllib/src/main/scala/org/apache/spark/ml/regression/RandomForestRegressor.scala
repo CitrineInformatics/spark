@@ -23,9 +23,9 @@ import org.json4s.JsonDSL._
 import org.apache.spark.annotation.Since
 import org.apache.spark.ml.{PredictionModel, Predictor}
 import org.apache.spark.ml.feature.LabeledPoint
-import org.apache.spark.ml.linalg.Vector
+import org.apache.spark.ml.linalg.{Vector, Vectors}
 import org.apache.spark.ml.param.ParamMap
-import org.apache.spark.ml.param.shared.HasVarianceCol
+import org.apache.spark.ml.param.shared.{HasScoresCol, HasVarianceCol}
 import org.apache.spark.ml.tree._
 import org.apache.spark.ml.tree.impl.RandomForest
 import org.apache.spark.ml.util._
@@ -44,7 +44,7 @@ import org.apache.spark.sql.functions._
 @Since("1.4.0")
 class RandomForestRegressor @Since("1.4.0") (@Since("1.4.0") override val uid: String)
   extends Predictor[Vector, RandomForestRegressor, RandomForestRegressionModel]
-  with HasVarianceCol
+  with HasVarianceCol with HasScoresCol
   with RandomForestRegressorParams with DefaultParamsWritable {
 
   @Since("1.4.0")
@@ -119,6 +119,9 @@ class RandomForestRegressor @Since("1.4.0") (@Since("1.4.0") override val uid: S
   @Since("2.0.2")
   def setVarianceCol(value: String): this.type = set(varianceCol, value)
 
+  @Since("2.0.2")
+  def setScoresCol(value: String): this.type = set(scoresCol, value)
+
   @Since("1.4.0")
   override def copy(extra: ParamMap): RandomForestRegressor = defaultCopy(extra)
 }
@@ -154,7 +157,7 @@ class RandomForestRegressionModel private[ml] (
     val Nib: Array[Array[Double]])
   extends PredictionModel[Vector, RandomForestRegressionModel]
   with RandomForestRegressionModelParams with TreeEnsembleModel[DecisionTreeRegressionModel]
-  with HasVarianceCol
+  with HasVarianceCol with HasScoresCol
   with MLWritable with Serializable {
 
   require(_trees.nonEmpty, "RandomForestRegressionModel requires at least 1 tree.")
@@ -189,9 +192,15 @@ class RandomForestRegressionModel private[ml] (
     val predictVarianceUDF = udf{ (features: Vector) =>
       bcastModel.value.predictVariance(features)
     }
+    val predictScoresUDF = udf{ (features: Vector) =>
+      bcastModel.value.predictScores(features)
+    }
     var output = dataset.withColumn($(predictionCol), predictUDF(col($(featuresCol))))
     if (isDefined(varianceCol)) {
       output = output.withColumn($(varianceCol), predictVarianceUDF(col($(featuresCol))))
+    }
+    if (isDefined(scoresCol)) {
+      output = output.withColumn($(scoresCol), predictScoresUDF(col($(featuresCol))))
     }
     output
   }
@@ -226,6 +235,21 @@ class RandomForestRegressionModel private[ml] (
     val correction = diff.map(Math.pow(_, 2)).sum * Nib.size / (getNumTrees * getNumTrees)
     /* Mix the IJ and J estimators with their bias corrections */
     (varianceIJ + varianceJ - Math.E * correction)/2.0
+  }
+
+  protected def predictScores(features: Vector): org.apache.spark.ml.linalg.Vector = {
+    val predictions: Array[Double] = _trees.map(_.rootNode.predictImpl(features).prediction)
+    /* Compute the average of the predictions */
+    val mean: Double = predictions.sum / getNumTrees
+    /* Compute the differences between each tree and the average */
+    val diff: Array[Double] = predictions.map(_ - mean)
+
+    /* Compute the infintesimal jackknife variance estimate */
+    Vectors.dense(
+      Nib.map { v =>
+        Math.abs(v.zip(diff).map(p2 => p2._1 * p2._2).sum / getNumTrees)
+      }
+    )
   }
 
   /**
